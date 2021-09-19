@@ -23,10 +23,10 @@ double resultado_r = 0.0;
 datetime ctm[1];
 datetime LastTime;
 double lot, slv, tpv;
-extern string id_ordem = "GPFPAIDlIFETIME";
+extern string id_ordem = "FXBANK";
 extern string Atributo_Pares = "";
-extern bool Auto_Lots = true;
-extern int MAGICNUMBER = 100046;
+bool Auto_Lots = true;
+extern int MAGICNUMBER = 100;
 datetime limite_operation;
 
 //+------------------------------------------------------------------+
@@ -69,9 +69,25 @@ bool MoveFileExW(string &lpExistingFileName, string &lpNewFileName, int dwFlags)
 //|                                                                  |
 //+------------------------------------------------------------------+
 string resultadoserver;
-extern bool trailing_stop = true;
-extern double trailing_stop_value_pip = 500;
-extern bool gold_trocado = false;
+bool trailing_stop = true;
+double trailing_stop_value_pip = 500;
+bool gold_trocado = false;
+extern int control_cicle = 30;
+enum ouro_s
+{
+    GOLD=0,
+    XAUUSD=1
+
+};
+input ouro_s ouro=GOLD;
+
+enum prata_s
+{
+    PRATA=0,
+    XAGUSD=1
+
+};
+input prata_s prata=PRATA;
 int OnInit()
 {
     int  fileHandle =0;
@@ -93,19 +109,6 @@ int OnInit()
         FileClose(fileHandle);
     }
 
-    if(limite_operation < __DATE__)
-    { 
-        
-        status__account = conta();
-        if (!status__account)
-        {
-            Alert(status__account);
-            Alert(limite_operation);
-            Alert("Sua conta não é valida ou sem conexão como servidor");
-            Alert("Chame no Telegram +5566999791203");
-            ExpertRemove();
-        }
-    }
     //Print("!!Atenção não coloque o robo em outros Pares!!");
 
     //
@@ -113,7 +116,7 @@ int OnInit()
 
     // pegasinal();
     HideTestIndicators(TRUE);
-    EventSetTimer(60);
+    EventSetTimer(control_cicle);
 
     //---
     return (INIT_SUCCEEDED);
@@ -131,11 +134,6 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-    if(trailing_stop)
-    {
-        
-        tStop(trailing_stop_value_pip,MAGICNUMBER);
-    }
     //---
     // principal();
 }
@@ -145,23 +143,15 @@ void OnTick()
 void OnTimer()
 {
     //---
-    string myIP = httpGET(urlK + "velho/custom/"+Symbol()+"/"+id_ordem+"/"+(string)AccountInfoInteger(ACCOUNT_LOGIN)+"/");
+    string myIP = httpGET(urlK + "copy/customs/"+id_ordem+"/");
+    Comment(myIP);
     if (myIP !=resultadoserver)
     {
         LerMensagem();
-        pegasinal();
+        pegasinal(myIP);
         resultadoserver = myIP;
     }
-    if(limite_operation < __DATE__)
-    {
-        status__account = conta();
-        if (!status__account)
-        {
-            Alert("Sua conta não é valida ou sem conexão como servidor");
-            Alert("Chame no Telegram +5566999791203");
-            ExpertRemove();
-        }
-    }
+
     //Print("asddddddd");
 }
 //+------------------------------------------------------------------+
@@ -179,12 +169,10 @@ void OnChartEvent(const int id,
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-void pegasinal()
+void pegasinal(string myIP )
 {
     string out = "";
-
     CJAVal json(NULL, jtUNDEF);
-    string myIP = httpGET(urlK + "velho/customs/"+id_ordem+"/");
     json.Deserialize(myIP);
     int i = 0;
     bool estaNatList = false;
@@ -200,6 +188,10 @@ void pegasinal()
 
         string asda = json["base_sinais"][i]["par"].ToStr();
         if (json["base_sinais"][i]["par"].ToStr() == "final")
+        {
+            estaNatList = true;
+        }
+        if (json["base_sinais"][i]["status"].ToStr() != "abertura")
         {
             estaNatList = true;
         }
@@ -232,29 +224,18 @@ void pegasinal()
             }
             if (!estaNatList && !trava_entrada_banca_baixa)
             {
-                 int get_ticket;
-                if (gold_trocado && (json["base_sinais"][i]["par"].ToStr()) == "GOLD")
-                {
-                    get_ticket = abertura_ordem(
-                        "SPIRIT",
-                        "XAUUSD" + Atributo_Pares,
-                        json["base_sinais"][i]["abertura"].ToStr(),
-                        StringToDouble(json["base_sinais"][i]["stop_win"].ToStr()),
-                        StringToDouble(json["base_sinais"][i]["stop_loss"].ToStr()),
-                        json["base_sinais"][i]["direcao"].ToStr(),
-                        entrada);
-                }
-                else
-                {
-                    get_ticket = abertura_ordem(
+                int get_ticket;
+                        get_ticket = abertura_ordem(
                         "SPIRIT",
                         json["base_sinais"][i]["par"].ToStr() + Atributo_Pares,
                         json["base_sinais"][i]["abertura"].ToStr(),
                         StringToDouble(json["base_sinais"][i]["stop_win"].ToStr()),
                         StringToDouble(json["base_sinais"][i]["stop_loss"].ToStr()),
                         json["base_sinais"][i]["direcao"].ToStr(),
-                        entrada);
-                }
+                        entrada,
+                        StringToDouble(json["base_sinais"][i]["preco"].ToStr())
+                        );
+                
                 if (get_ticket != -1)
                 {
                     Mensagem((string)get_ticket, json["base_sinais"][i]["id"].ToStr());
@@ -300,27 +281,60 @@ bool conta(double capitado = 0)
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-int abertura_ordem(string _id, string par, string abertura, double stop_loss, double stop_win, string direc, double lote)
+int abertura_ordem(string _id, string par, string abertura, double stop_loss, double stop_win, string direc, double lote, double preco)
 {
     int order;
     string _direction = direc;
     //Alert(_direction);
     RefreshRates();
-    Print(_id," par ",par," abertura ",abertura," stop_win ",stop_win," stop_loss ",stop_loss," direc ",direc," lote",lote, " point ",Point() );
+    par = vr_par(par);
+    if (stop_loss >0)
+        stop_loss = NP(stop_loss,par);
+
+    if (stop_win >0)
+        stop_win = NP(stop_win,par);
+        
+    preco = NP(preco,par);
+    
+    Print(_id," par ",par," abertura ",preco," stop_win ",stop_win," stop_loss ",stop_loss," direc ",direc," lote",lote, " point ",Point());
     if (_direction == "BUY")
     {
         //Print("entrooooo", par);
         RefreshRates();
-        order = OrderSend(par, OP_BUY, lote, Ask, 0, stop_win +Point(), stop_loss+Point(), "spirit", MAGICNUMBER, 0, clrBlueViolet);
+
+        order = OrderSend(par, OP_BUYSTOP, lote, preco, 0, stop_win , stop_loss, "spirit", MAGICNUMBER, 0, clrBlueViolet);
+        RefreshRates();
+        if(order==-1)
+        {
+            order = OrderSend(par, OP_BUYLIMIT, lote, preco, 0, stop_win , stop_loss, "spirit", MAGICNUMBER, 0, clrBlueViolet);
+            RefreshRates();
+        }
+        if(order==-1)
+        {
+            order = OrderSend(par, OP_BUY, lote, preco, 0, stop_win , stop_loss, "spirit", MAGICNUMBER, 0, clrBlueViolet);
+            RefreshRates();
+        }
         //order = OrderSend(par, OP_BUY, lote, Ask, 0, 0,0, "spirit", MAGICNUMBER, 0, clrBlueViolet);
-        
+        RefreshRates();
         return (order);
     }
     if (_direction == "SELL")
     {
         //Print("entr_______", par);
-        order = OrderSend(par, OP_SELL, lote, Ask, 0, stop_win+Point(), stop_loss+Point(), "spirit", MAGICNUMBER, 0, clrBlueViolet);
-        //order = OrderSend(par, OP_SELL, lote, Ask, 0, 0, 0, "spirit", MAGICNUMBER, 0, clrBlueViolet);
+        RefreshRates();
+
+        order = OrderSend(par, OP_SELLSTOP, lote, preco, 0, stop_win , stop_loss, "spirit", MAGICNUMBER, 0, clrBlueViolet);
+        RefreshRates();
+        if(order==-1)
+        {
+            order = OrderSend(par, OP_SELLLIMIT, lote, preco, 0, stop_win , stop_loss, "spirit", MAGICNUMBER, 0, clrBlueViolet);
+            RefreshRates();
+        }
+        if(order==-1)
+        {
+            order = OrderSend(par, OP_SELL, lote, preco, 0, stop_win , stop_loss, "spirit", MAGICNUMBER, 0, clrBlueViolet);
+            RefreshRates();
+        }
         return (order);
         RefreshRates();
     }
@@ -378,6 +392,42 @@ void MensagemHistorico(string dict_, string atributo_)
             break;
         }
     }
+}
+double NP(double price,string moeda)
+{
+    //NormalizeDouble( ,MarketInfo(moeda,MODE_DIGITS))
+    //double tickSize = SymbolInfoDouble(moeda, SYMBOL_TRADE_TICK_SIZE);
+    return (NormalizeDouble(price+MarketInfo(moeda,MODE_POINT),MarketInfo(moeda,MODE_DIGITS)));
+}
+
+string vr_par(string moeda)
+{
+    if ((moeda) == "GOLD")  
+    {
+        StringReplace(moeda, "Atributo_Pares", "");
+        if(ouro ==0)
+        {
+            return("GOLD"+Atributo_Pares);
+        }
+        else
+        {
+            return("XAUUSD"+Atributo_Pares);
+        }
+    }
+    if ((moeda) == "PRATA")
+    {
+        StringReplace(moeda, "Atributo_Pares", "");
+        if(prata ==0)
+        {
+            return("PRATA"+Atributo_Pares);
+        }
+        else
+        {
+            return("XAGUSD"+Atributo_Pares);
+        }
+    }
+    
+    return (moeda);
 }
 
 void tStop(int stop, int MN)// Symbol + stop in pips + magic number
@@ -483,7 +533,7 @@ string httpPost(string strUrl, int port, string idxfile = "get_to_id", string id
     {
         offget = WebRequest(
             "POST",                                      // HTTP method
-            "http://" + endereco + ":80/velho/" + idxfile, // URL
+            "http://" + endereco + ":80/copy/" + idxfile, // URL
             headers,                                     // headers
             100000000,                                   // timeout
             data,                                        // the array of the HTTP message body
